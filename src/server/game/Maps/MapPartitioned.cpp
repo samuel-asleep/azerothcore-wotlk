@@ -104,6 +104,64 @@ void MapPartition::CreatureRelocation(Creature* creature, float x, float y, floa
 }
 
 // ---------------------------------------------------------------------------
+// Transport overrides
+// ---------------------------------------------------------------------------
+
+void MapPartition::SendInitTransports(Player* player)
+{
+    // The continent transports (boats/zeppelins) live in the parent
+    // MapPartitioned._transports. Delegate to the parent so that every player
+    // who joins any partition receives the correct transport update packets.
+    _parent->Map::SendInitTransports(player);
+}
+
+void MapPartition::SendRemoveTransports(Player* player)
+{
+    // Mirror of SendInitTransports: send remove packets for all transports
+    // owned by the parent.
+    _parent->Map::SendRemoveTransports(player);
+}
+
+// ---------------------------------------------------------------------------
+// Zone dynamic info (weather/music/light) overrides
+// ---------------------------------------------------------------------------
+
+void MapPartition::SetZoneMusic(uint32 zoneId, uint32 musicId)
+{
+    // Update and broadcast to every sibling partition so all players in the
+    // zone see the same zone music regardless of which partition they are in.
+    for (auto& [id, partition] : _parent->GetPartitions())
+    {
+        if (partition != this)
+            partition->Map::SetZoneMusic(zoneId, musicId);
+    }
+    Map::SetZoneMusic(zoneId, musicId);
+}
+
+void MapPartition::SetZoneWeather(uint32 zoneId, WeatherState weatherId, float weatherGrade)
+{
+    // Propagate the weather change to ALL sibling partitions so the same zone
+    // shows consistent weather to every player on the continent.
+    for (auto& [id, partition] : _parent->GetPartitions())
+    {
+        if (partition != this)
+            partition->Map::SetZoneWeather(zoneId, weatherId, weatherGrade);
+    }
+    Map::SetZoneWeather(zoneId, weatherId, weatherGrade);
+}
+
+void MapPartition::SetZoneOverrideLight(uint32 zoneId, uint32 lightId, Milliseconds fadeInTime)
+{
+    // Propagate override-light changes across all partitions.
+    for (auto& [id, partition] : _parent->GetPartitions())
+    {
+        if (partition != this)
+            partition->Map::SetZoneOverrideLight(zoneId, lightId, fadeInTime);
+    }
+    Map::SetZoneOverrideLight(zoneId, lightId, fadeInTime);
+}
+
+// ---------------------------------------------------------------------------
 // MapPartitioned
 // ---------------------------------------------------------------------------
 
@@ -252,6 +310,18 @@ void MapPartitioned::UnloadAll()
     _partitions.clear();
 
     Map::UnloadAll();
+}
+
+void MapPartitioned::DoForAllPlayers(std::function<void(Player*)> exec)
+{
+    for (auto& [id, partition] : _partitions)
+        partition->Map::DoForAllPlayers(exec);
+}
+
+void MapPartitioned::PlayDirectSoundToMap(uint32 soundId, uint32 zoneId)
+{
+    for (auto& [id, partition] : _partitions)
+        partition->Map::PlayDirectSoundToMap(soundId, zoneId);
 }
 
 void MapPartitioned::QueuePlayerTransfer(Player* player,

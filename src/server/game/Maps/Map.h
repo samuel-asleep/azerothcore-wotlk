@@ -457,8 +457,8 @@ public:
     bool SendZoneMessage(uint32 zone, WorldPacket const* packet, WorldSession const* self = nullptr, TeamId teamId = TEAM_NEUTRAL) const;
     void SendZoneText(uint32 zoneId, char const* text, WorldSession const* self = nullptr, TeamId teamId = TEAM_NEUTRAL) const;
 
-    void SendInitTransports(Player* player);
-    void SendRemoveTransports(Player* player);
+    virtual void SendInitTransports(Player* player);
+    virtual void SendRemoveTransports(Player* player);
     void SendZoneDynamicInfo(uint32 zoneId, Player* player) const;
     void SendZoneWeather(uint32 zoneId, Player* player) const;
     void SendZoneWeather(ZoneDynamicInfo const& zoneDynamicInfo, Player* player) const;
@@ -467,18 +467,18 @@ public:
     void UpdateWeather(uint32 const diff);
     void UpdateExpiredCorpses(uint32 const diff);
 
-    void PlayDirectSoundToMap(uint32 soundId, uint32 zoneId = 0);
-    void SetZoneMusic(uint32 zoneId, uint32 musicId);
+    virtual void PlayDirectSoundToMap(uint32 soundId, uint32 zoneId = 0);
+    virtual void SetZoneMusic(uint32 zoneId, uint32 musicId);
     Weather* GetOrGenerateZoneDefaultWeather(uint32 zoneId);
-    void SetZoneWeather(uint32 zoneId, WeatherState weatherId, float weatherGrade);
-    void SetZoneOverrideLight(uint32 zoneId, uint32 lightId, Milliseconds fadeInTime);
+    virtual void SetZoneWeather(uint32 zoneId, WeatherState weatherId, float weatherGrade);
+    virtual void SetZoneOverrideLight(uint32 zoneId, uint32 lightId, Milliseconds fadeInTime);
 
     // Checks encounter state at kill/spellcast, originally in InstanceScript however not every map has instance script :(
     void UpdateEncounterState(EncounterCreditType type, uint32 creditEntry, Unit* source);
     void LogEncounterFinished(EncounterCreditType type, uint32 creditEntry);
 
     // Do whatever you want to all the players in map [including GameMasters], i.e.: param exec = [&](Player* p) { p->Whatever(); }
-    void DoForAllPlayers(std::function<void(Player*)> exec);
+    virtual void DoForAllPlayers(std::function<void(Player*)> exec);
 
     void EnsureGridCreated(GridCoord const& gridCoord);
     [[nodiscard]] bool AllTransportsEmpty() const; // pussywizard

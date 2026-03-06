@@ -96,6 +96,16 @@ Map* MapMgr::CreateBaseMap(uint32 id)
                 else if (numPartitions > 8)
                     numPartitions = 8;
 
+                uint32 numThreads = sWorld->getIntConfig(CONFIG_NUMTHREADS);
+                if (numPartitions > numThreads)
+                {
+                    LOG_WARN("maps",
+                             "NumPartitions ({}) is greater than MapUpdate.Threads ({}). "
+                             "Partitions will be updated sequentially; set MapUpdate.Threads >= {} "
+                             "to benefit from parallel processing.",
+                             numPartitions, numThreads, numPartitions);
+                }
+
                 map = new MapPartitioned(id, numPartitions);
 
                 LOG_INFO("maps",

@@ -36,6 +36,10 @@ class MapPartitioned;
  * updates complete (in MapPartitioned::DelayedUpdate), guaranteeing that no
  * entity is updated twice or missed within a single tick.
  *
+ * Shared systems (transports, zone weather/music/light) are owned by the
+ * parent MapPartitioned. Partitions delegate reads and writes for these
+ * systems to the parent so that all partitions present a consistent view.
+ *
  * Known limitation (v1): Entities near a partition boundary cannot see or
  * directly interact with entities in the adjacent partition. This is because
  * each partition manages its own grid/cell structure. Cross-partition
@@ -58,9 +62,22 @@ public:
     void InitVisibilityDistance() override;
     void UnloadAll() override;
 
-    // Relocation overrides: detect when an entity crosses partition boundary
+    // Relocation overrides: detect when a player crosses partition boundary
     void PlayerRelocation(Player*, float x, float y, float z, float o) override;
     void CreatureRelocation(Creature*, float x, float y, float z, float o) override;
+
+    // Transport overrides: delegate to parent's transport container so that
+    // continent boats/zeppelins (stored in MapPartitioned._transports) are
+    // visible to players that reside in this partition.
+    void SendInitTransports(Player* player) override;
+    void SendRemoveTransports(Player* player) override;
+
+    // Zone dynamic info overrides: propagate explicit weather/music/light
+    // changes to ALL sibling partitions so the continent presents a consistent
+    // zone state regardless of which partition a player is in.
+    void SetZoneMusic(uint32 zoneId, uint32 musicId) override;
+    void SetZoneWeather(uint32 zoneId, WeatherState weatherId, float weatherGrade) override;
+    void SetZoneOverrideLight(uint32 zoneId, uint32 lightId, Milliseconds fadeInTime) override;
 
     /**
      * Returns true if world position (x, y) falls within this partition's grid range.
@@ -122,6 +139,11 @@ public:
 
     bool AddPlayerToMap(Player*) override;
     void RemovePlayerFromMap(Player*, bool) override;
+
+    // Player iteration: override so that callers who get the base MapPartitioned
+    // (e.g. via sMapMgr->FindBaseMap) still reach all continent players.
+    void DoForAllPlayers(std::function<void(Player*)> exec) override;
+    void PlayDirectSoundToMap(uint32 soundId, uint32 zoneId = 0) override;
 
     /**
      * Returns the partition whose grid range contains (x, y), or nullptr if
