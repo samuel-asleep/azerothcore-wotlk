@@ -1362,6 +1362,36 @@ MapUpdateInterval = 10
 MapUpdate.Threads = 1
 
 #
+#    MapPartitioning.Enable
+#        Description: Enable map partitioning for continent maps (non-instanced, non-battleground).
+#                     Partitioning splits large continent maps (e.g. Eastern Kingdoms, Kalimdor)
+#                     into smaller geographic sub-maps that can be updated in parallel by the
+#                     MapUpdate.Threads thread pool, reducing per-tick load on high-population
+#                     servers.
+#
+#                     IMPORTANT: This is an experimental feature. Entities near partition
+#                     boundaries may not be visible to or interact with entities in adjacent
+#                     partitions. Suitable for servers where MapUpdate.Threads > 1.
+#
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled, experimental)
+
+MapPartitioning.Enable = 0
+
+#
+#    MapPartitioning.NumPartitions
+#        Description: Number of partitions to divide each continent map into.
+#                     Continent maps are split into N equal-sized sections along the Y axis.
+#                     For best results, set this to a value no greater than MapUpdate.Threads.
+#
+#                     Only used when MapPartitioning.Enable = 1.
+#
+#        Default:     2 - (Split each continent into 2 partitions)
+#        Range:       2 - 8
+
+MapPartitioning.NumPartitions = 2
+
+#
 #    MoveMaps.Enable
 #        Description: Enable/Disable pathfinding using mmaps - recommended.
 #        Default:     0 - (Disabled)

@@ -546,6 +546,10 @@ void WorldConfig::BuildConfigCache()
     SetConfigValue<uint32>(CONFIG_NUMTHREADS, "MapUpdate.Threads", 1);
     SetConfigValue<uint32>(CONFIG_MAX_RESULTS_LOOKUP_COMMANDS, "Command.LookupMaxResults", 0);
 
+    // Map partitioning
+    SetConfigValue<bool>(CONFIG_MAP_PARTITIONING_ENABLE, "MapPartitioning.Enable", false);
+    SetConfigValue<uint32>(CONFIG_MAP_PARTITIONING_NUM_PARTITIONS, "MapPartitioning.NumPartitions", 2);
+
     // Warden
     SetConfigValue<bool>(CONFIG_WARDEN_ENABLED, "Warden.Enabled", true);
     SetConfigValue<uint32>(CONFIG_WARDEN_NUM_MEM_CHECKS, "Warden.NumMemChecks", 3);

@@ -59,6 +59,8 @@ class Battleground;
 class MapInstanced;
 class InstanceMap;
 class BattlegroundMap;
+class MapPartitioned;
+class MapPartition;
 class Transport;
 class StaticTransport;
 class MotionTransport;
@@ -198,10 +200,10 @@ public:
     //function for setting up visibility distance for maps on per-type/per-Id basis
     virtual void InitVisibilityDistance();
 
-    void PlayerRelocation(Player*, float x, float y, float z, float o);
-    void CreatureRelocation(Creature* creature, float x, float y, float z, float o);
-    void GameObjectRelocation(GameObject* go, float x, float y, float z, float o);
-    void DynamicObjectRelocation(DynamicObject* go, float x, float y, float z, float o);
+    virtual void PlayerRelocation(Player*, float x, float y, float z, float o);
+    virtual void CreatureRelocation(Creature* creature, float x, float y, float z, float o);
+    virtual void GameObjectRelocation(GameObject* go, float x, float y, float z, float o);
+    virtual void DynamicObjectRelocation(DynamicObject* go, float x, float y, float z, float o);
 
     template<class T, class CONTAINER> void Visit(const Cell& cell, TypeContainerVisitor<T, CONTAINER>& visitor);
 
@@ -381,6 +383,13 @@ public:
 
     BattlegroundMap* ToBattlegroundMap() { if (IsBattlegroundOrArena()) return reinterpret_cast<BattlegroundMap*>(this); else return nullptr;  }
     [[nodiscard]] BattlegroundMap const* ToBattlegroundMap() const { if (IsBattlegroundOrArena()) return reinterpret_cast<BattlegroundMap const*>(this); return nullptr; }
+
+    [[nodiscard]] virtual bool IsPartition() const { return false; }
+    [[nodiscard]] virtual bool IsPartitioned() const { return false; }
+    MapPartition* ToMapPartition() { return IsPartition() ? reinterpret_cast<MapPartition*>(this) : nullptr; }
+    [[nodiscard]] MapPartition const* ToMapPartition() const { return IsPartition() ? reinterpret_cast<MapPartition const*>(this) : nullptr; }
+    MapPartitioned* ToMapPartitioned() { return IsPartitioned() ? reinterpret_cast<MapPartitioned*>(this) : nullptr; }
+    [[nodiscard]] MapPartitioned const* ToMapPartitioned() const { return IsPartitioned() ? reinterpret_cast<MapPartitioned const*>(this) : nullptr; }
 
     float GetWaterOrGroundLevel(uint32 phasemask, float x, float y, float z, float* ground = nullptr, bool swim = false, float collisionHeight = DEFAULT_COLLISION_HEIGHT) const;
     [[nodiscard]] float GetHeight(uint32 phasemask, float x, float y, float z, bool vmap = true, float maxSearchDist = DEFAULT_HEIGHT_SEARCH) const;
@@ -567,6 +576,9 @@ protected:
 
     TransportsContainer _transports;
     TransportsContainer::iterator _transportsUpdateIter;
+
+    ZoneDynamicInfoMap& GetZoneDynamicInfoMap() { return _zoneDynamicInfo; }
+    [[nodiscard]] ZoneDynamicInfoMap const& GetZoneDynamicInfoMap() const { return _zoneDynamicInfo; }
 
 private:
     Player* _GetScriptPlayerSourceOrTarget(Object* source, Object* target, const ScriptInfo* scriptInfo) const;

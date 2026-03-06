@@ -26,6 +26,7 @@
 #include "Language.h"
 #include "Log.h"
 #include "MapInstanced.h"
+#include "MapPartitioned.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Opcodes.h"
@@ -33,6 +34,7 @@
 #include "ScriptMgr.h"
 #include "Transport.h"
 #include "World.h"
+#include "WorldConfig.h"
 #include "WorldPacket.h"
 
 MapMgr::MapMgr()
@@ -82,19 +84,57 @@ Map* MapMgr::CreateBaseMap(uint32 id)
             ASSERT(entry);
 
             if (entry->Instanceable())
+            {
                 map = new MapInstanced(id);
+            }
+            else if (!entry->IsBattlegroundOrArena() &&
+                     sWorld->getBoolConfig(CONFIG_MAP_PARTITIONING_ENABLE))
+            {
+                uint32 numPartitions = sWorld->getIntConfig(CONFIG_MAP_PARTITIONING_NUM_PARTITIONS);
+                if (numPartitions < 2)
+                    numPartitions = 2;
+                else if (numPartitions > 8)
+                    numPartitions = 8;
+
+                map = new MapPartitioned(id, numPartitions);
+
+                LOG_INFO("maps",
+                         "Map partitioning enabled for map {} '{}': {} partitions",
+                         id, entry->name[0], numPartitions);
+            }
             else
+            {
                 map = new Map(id, 0, REGULAR_DIFFICULTY);
+            }
 
             i_maps[id] = map;
 
             if (!entry->Instanceable())
             {
-                map->LoadRespawnTimes();
-                map->LoadCorpseData();
+                if (MapPartitioned* mapPartitioned = map->ToMapPartitioned())
+                {
+                    // For partitioned maps load respawn times and corpse data
+                    // into each partition's data stores. Each partition manages
+                    // its own entities independently.
+                    for (auto& [partId, partition] : mapPartitioned->GetPartitions())
+                    {
+                        partition->LoadRespawnTimes();
+                        partition->LoadCorpseData();
+                    }
+                }
+                else
+                {
+                    map->LoadRespawnTimes();
+                    map->LoadCorpseData();
+                }
             }
 
             map->OnCreateMap();
+            if (MapPartitioned* mapPartitioned = map->ToMapPartitioned())
+            {
+                for (auto& [partId, partition] : mapPartitioned->GetPartitions())
+                    partition->OnCreateMap();
+            }
         }
     }
 
