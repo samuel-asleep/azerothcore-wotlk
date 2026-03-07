@@ -20,6 +20,7 @@
 
 #include "Map.h"
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 class MapPartitioned;
@@ -177,9 +178,20 @@ public:
      */
     void QueueCreatureTransfer(Creature* creature, float newX, float newY, float newZ, float newO);
 
+    /**
+     * Thread-safe: enqueue a zone music/weather/light change to be applied
+     * to all partitions in DelayedUpdate() (after all parallel updates finish).
+     * Callers must NOT write directly to sibling partitions' _zoneDynamicInfo
+     * from a worker thread, as that would race with their concurrent updates.
+     */
+    void EnqueueZoneMusic(uint32 zoneId, uint32 musicId);
+    void EnqueueZoneWeather(uint32 zoneId, WeatherState weatherId, float weatherGrade);
+    void EnqueueZoneOverrideLight(uint32 zoneId, uint32 lightId, Milliseconds fadeInTime);
+
 private:
     void CreatePartitions(uint32 numPartitions);
     void ProcessPendingTransfers();
+    void ApplyPendingZoneChanges();
 
     /**
      * Perform a transparent player partition transfer without sending
@@ -188,9 +200,12 @@ private:
     void TransferPlayerToPartition(Player* player, MapPartition* dest,
                                    float x, float y, float z, float o);
 
+    // ObjectGuid is used instead of raw Player* to avoid use-after-free when
+    // a player disconnects between the time the transfer is queued and the
+    // time ProcessPendingTransfers runs.
     struct PlayerTransfer
     {
-        Player* player;
+        ObjectGuid guid;
         float x, y, z, o;
     };
 
@@ -200,12 +215,27 @@ private:
         float x, y, z, o;
     };
 
+    enum class ZoneChangeType : uint8 { Music, Weather, OverrideLight };
+    struct PendingZoneChange
+    {
+        ZoneChangeType type;
+        uint32 zoneId;
+        uint32 musicId;
+        WeatherState weatherId;
+        float weatherGrade;
+        uint32 lightId;
+        Milliseconds fadeInTime;
+    };
+
     PartitionMap _partitions;
     uint32 _numPartitions;
 
     std::mutex _transferMutex;
     std::vector<PlayerTransfer> _pendingPlayerTransfers;
     std::vector<CreatureTransfer> _pendingCreatureTransfers;
+
+    std::mutex _zoneChangeMutex;
+    std::vector<PendingZoneChange> _pendingZoneChanges;
 };
 
 #endif // ACORE_MAP_PARTITIONED_H

@@ -20,8 +20,12 @@
 #include "GridDefines.h"
 #include "Log.h"
 #include "MapMgr.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
 #include "Vehicle.h"
+
+// Sentinel zone value matching the MAP_INVALID_ZONE #define in Map.cpp.
+static constexpr uint32 PARTITION_INVALID_ZONE = 0xFFFFFFFF;
 
 // ---------------------------------------------------------------------------
 // MapPartition
@@ -128,37 +132,23 @@ void MapPartition::SendRemoveTransports(Player* player)
 
 void MapPartition::SetZoneMusic(uint32 zoneId, uint32 musicId)
 {
-    // Update and broadcast to every sibling partition so all players in the
-    // zone see the same zone music regardless of which partition they are in.
-    for (auto& [id, partition] : _parent->GetPartitions())
-    {
-        if (partition != this)
-            partition->Map::SetZoneMusic(zoneId, musicId);
-    }
-    Map::SetZoneMusic(zoneId, musicId);
+    // Enqueue on the parent so the change is applied to ALL partitions in
+    // MapPartitioned::DelayedUpdate (after all parallel updates finish).
+    // Direct mutation of sibling partitions' _zoneDynamicInfo from a worker
+    // thread would race with their concurrent Map::Update execution.
+    _parent->EnqueueZoneMusic(zoneId, musicId);
 }
 
 void MapPartition::SetZoneWeather(uint32 zoneId, WeatherState weatherId, float weatherGrade)
 {
-    // Propagate the weather change to ALL sibling partitions so the same zone
-    // shows consistent weather to every player on the continent.
-    for (auto& [id, partition] : _parent->GetPartitions())
-    {
-        if (partition != this)
-            partition->Map::SetZoneWeather(zoneId, weatherId, weatherGrade);
-    }
-    Map::SetZoneWeather(zoneId, weatherId, weatherGrade);
+    // See SetZoneMusic for rationale.
+    _parent->EnqueueZoneWeather(zoneId, weatherId, weatherGrade);
 }
 
 void MapPartition::SetZoneOverrideLight(uint32 zoneId, uint32 lightId, Milliseconds fadeInTime)
 {
-    // Propagate override-light changes across all partitions.
-    for (auto& [id, partition] : _parent->GetPartitions())
-    {
-        if (partition != this)
-            partition->Map::SetZoneOverrideLight(zoneId, lightId, fadeInTime);
-    }
-    Map::SetZoneOverrideLight(zoneId, lightId, fadeInTime);
+    // See SetZoneMusic for rationale.
+    _parent->EnqueueZoneOverrideLight(zoneId, lightId, fadeInTime);
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +287,12 @@ void MapPartitioned::DelayedUpdate(uint32 diff)
     // player transfers sequentially, which is safe.
     ProcessPendingTransfers();
 
+    // Apply zone music/weather/light changes queued from partition worker
+    // threads.  Running here (after MapUpdater::wait()) guarantees that all
+    // partition threads have finished, so writing to their _zoneDynamicInfo is
+    // safe and race-free.
+    ApplyPendingZoneChanges();
+
     Map::DelayedUpdate(diff);
 }
 
@@ -328,8 +324,11 @@ void MapPartitioned::QueuePlayerTransfer(Player* player,
                                           float newX, float newY,
                                           float newZ, float newO)
 {
+    // Store the player's GUID rather than a raw pointer.  The player might
+    // disconnect and be deleted between QueuePlayerTransfer and
+    // ProcessPendingTransfers; the GUID lets us safely check for liveness.
     std::lock_guard<std::mutex> guard(_transferMutex);
-    _pendingPlayerTransfers.push_back({player, newX, newY, newZ, newO});
+    _pendingPlayerTransfers.push_back({player->GetGUID(), newX, newY, newZ, newO});
 }
 
 void MapPartitioned::QueueCreatureTransfer(Creature* creature,
@@ -348,27 +347,34 @@ void MapPartitioned::TransferPlayerToPartition(Player* player,
     // Light-weight partition transfer – no map-enter/leave packets are sent
     // to the client because partition boundaries are transparent to players.
 
+    // 0. Capture the source partition before relinking.
+    MapPartition* src = player->GetMap() ? player->GetMap()->ToMapPartition() : nullptr;
+
     // 1. Remove from the current partition's grid.
     if (player->IsInGrid())
         player->RemoveFromGrid();
 
-    // 2. Re-link the player's map reference to the destination partition.
+    // 2. Decrement zone player count on the source partition.
+    if (src)
+        src->UpdatePlayerZoneStats(player->GetZoneId(), PARTITION_INVALID_ZONE);
+
+    // 3. Re-link the player's map reference to the destination partition.
     //    This updates the partition's player list (m_mapRefMgr).
     player->GetMapRef().link(dest, player);
 
-    // 3. Update the player's map pointer.
+    // 4. Update the player's map pointer.
     player->SetMap(dest);
 
-    // 4. Relocate to the new position.
+    // 5. Relocate to the new position.
     player->Relocate(x, y, z, o);
     if (player->IsVehicle())
         player->GetVehicleKit()->RelocatePassengers();
     player->UpdatePositionData();
 
-    // 5. Ensure the relevant grids are loaded in the destination partition.
+    // 6. Ensure the relevant grids are loaded in the destination partition.
     dest->LoadGridsInRange(*player, MAX_VISIBILITY_DISTANCE);
 
-    // 6. Add player to the destination partition's grid.
+    // 7. Add player to the destination partition's grid.
     CellCoord cellCoord = Acore::ComputeCellCoord(x, y);
     if (cellCoord.IsCoordValid())
     {
@@ -377,7 +383,11 @@ void MapPartitioned::TransferPlayerToPartition(Player* player,
         dest->AddToGrid(player, newCell);   // allowed: MapPartitioned is friend of MapPartition
     }
 
-    // 7. Update visibility from the new position.
+    // 8. Increment zone player count on the destination partition (zone ID may
+    //    have changed after UpdatePositionData refreshed the zone).
+    dest->UpdatePlayerZoneStats(PARTITION_INVALID_ZONE, player->GetZoneId());
+
+    // 9. Update visibility from the new position.
     player->UpdateObjectVisibility(false);
 }
 
@@ -395,7 +405,9 @@ void MapPartitioned::ProcessPendingTransfers()
     // --- Player transfers ---
     for (auto& t : playerTransfers)
     {
-        Player* player = t.player;
+        // Resolve the stored GUID to a live Player pointer.  The player may
+        // have disconnected and been deleted since the transfer was queued.
+        Player* player = ObjectAccessor::FindPlayer(t.guid);
         if (!player || !player->IsInWorld())
             continue;
 
@@ -428,4 +440,60 @@ void MapPartitioned::ProcessPendingTransfers()
     // Creatures that wander into a neighboring partition's grid range continue
     // to be processed by their source partition. This is a known limitation.
     (void)creatureTransfers;
+}
+
+void MapPartitioned::EnqueueZoneMusic(uint32 zoneId, uint32 musicId)
+{
+    std::lock_guard<std::mutex> guard(_zoneChangeMutex);
+    _pendingZoneChanges.push_back(
+        {.type = ZoneChangeType::Music, .zoneId = zoneId, .musicId = musicId});
+}
+
+void MapPartitioned::EnqueueZoneWeather(uint32 zoneId, WeatherState weatherId,
+                                         float weatherGrade)
+{
+    std::lock_guard<std::mutex> guard(_zoneChangeMutex);
+    _pendingZoneChanges.push_back(
+        {.type = ZoneChangeType::Weather, .zoneId = zoneId,
+         .weatherId = weatherId, .weatherGrade = weatherGrade});
+}
+
+void MapPartitioned::EnqueueZoneOverrideLight(uint32 zoneId, uint32 lightId,
+                                               Milliseconds fadeInTime)
+{
+    std::lock_guard<std::mutex> guard(_zoneChangeMutex);
+    _pendingZoneChanges.push_back(
+        {.type = ZoneChangeType::OverrideLight, .zoneId = zoneId,
+         .lightId = lightId, .fadeInTime = fadeInTime});
+}
+
+void MapPartitioned::ApplyPendingZoneChanges()
+{
+    // Swap under lock so partitions can enqueue new changes next tick.
+    std::vector<PendingZoneChange> changes;
+    {
+        std::lock_guard<std::mutex> guard(_zoneChangeMutex);
+        changes.swap(_pendingZoneChanges);
+    }
+
+    for (auto const& change : changes)
+    {
+        for (auto& [id, partition] : _partitions)
+        {
+            switch (change.type)
+            {
+                case ZoneChangeType::Music:
+                    partition->Map::SetZoneMusic(change.zoneId, change.musicId);
+                    break;
+                case ZoneChangeType::Weather:
+                    partition->Map::SetZoneWeather(change.zoneId, change.weatherId,
+                                                   change.weatherGrade);
+                    break;
+                case ZoneChangeType::OverrideLight:
+                    partition->Map::SetZoneOverrideLight(change.zoneId, change.lightId,
+                                                         change.fadeInTime);
+                    break;
+            }
+        }
+    }
 }

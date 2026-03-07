@@ -101,8 +101,8 @@ Map* MapMgr::CreateBaseMap(uint32 id)
                 {
                     LOG_WARN("maps",
                              "NumPartitions ({}) is greater than MapUpdate.Threads ({}). "
-                             "Partitions will be updated sequentially; set MapUpdate.Threads >= {} "
-                             "to benefit from parallel processing.",
+                             "Partitions will be updated with limited parallelism; set MapUpdate.Threads >= {} "
+                             "to maximize parallel processing.",
                              numPartitions, numThreads, numPartitions);
                 }
 
@@ -139,11 +139,16 @@ Map* MapMgr::CreateBaseMap(uint32 id)
                 }
             }
 
-            map->OnCreateMap();
             if (MapPartitioned* mapPartitioned = map->ToMapPartitioned())
             {
+                // For partitioned maps, fire OnCreateMap for each child partition
+                // (not the container itself) to avoid duplicate WorldMapScript hooks.
                 for (auto& [partId, partition] : mapPartitioned->GetPartitions())
                     partition->OnCreateMap();
+            }
+            else
+            {
+                map->OnCreateMap();
             }
         }
     }
